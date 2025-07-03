@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Face Area Segmentation (No Forehead)</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: scaleX(-1); /* Mirror image */
+    }
+  </style>
+</head>
+<body>
+  <video id="inputVideo" autoplay muted playsinline width="640" height="480"></video>
+  <canvas id="outputCanvas" width="640" height="480"></canvas>
+
+  <script type="module">
+    import {
+      FilesetResolver,
+      FaceLandmarker,
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+
+    const video = document.getElementById("inputVideo");
+    const canvas = document.getElementById("outputCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let faceLandmarker;
+
+    // Facial landmark indices excluding forehead
+    const boundaryPoints = [
+      10, 338, 297, 332, 284, 251, 389, 356, 454, 323,
+      361, 288, 397, 365, 379, 378, 400, 377, 152, 148,
+      176, 149, 150, 136, 172, 58, 132, 93, 234, 127,
+      162, 21, 54, 103, 67, 109,
+    ];
+
+    const setupCamera = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      return new Promise((resolve) => {
+        video.onloadedmetadata = () => resolve(video);
+      });
+    };
+
+    const loadFaceModel = async () => {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+      );
+
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        },
+        runningMode: "VIDEO",
+        numFaces: 1,
+      });
+    };
+
+    const drawFaceMask = (landmarks, width, height) => {
+      ctx.save();
+      ctx.beginPath();
+
+      boundaryPoints.forEach((index, i) => {
+        const pt = landmarks[index];
+        if (!pt) return;
+        const x = pt.x * width;
+        const y = pt.y * height;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+
+      ctx.closePath();
+      ctx.fillStyle = "rgba(0, 255, 0, 0.3)"; // semi-transparent green
+      ctx.fill();
+      ctx.restore();
+    };
+
+    const renderLoop = async () => {
+      const now = performance.now();
+      const faceResults = await faceLandmarker.detectForVideo(video, now);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      if (faceResults.faceLandmarks?.length > 0) {
+        drawFaceMask(faceResults.faceLandmarks[0], canvas.width, canvas.height);
+      }
+
+      requestAnimationFrame(renderLoop);
+    };
+
+    await setupCamera();
+    await loadFaceModel();
+    renderLoop();
+  </script>
+</body>
+</html>

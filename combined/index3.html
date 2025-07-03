@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Face + Hair + Skin Segmentation</title>
+  <style>
+    body, html {
+      margin: 0; padding: 0; overflow: hidden; background: black;
+    }
+    video, canvas {
+      position: absolute; top: 0; left: 0;
+      width: 640px; height: 480px;
+      object-fit: cover;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+
+  <!-- Load TensorFlow.js and BodyPix -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.2.0/dist/body-pix.min.js"></script>
+
+  <script type="module">
+    import {
+      FilesetResolver,
+      ImageSegmenter,
+      FaceLandmarker
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.4/vision_bundle.mjs";
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const BODYPIX_FACE_PART_ID = 1; // face skin part id
+
+    // FaceLandmarker boundary points (excluding forehead)
+    const boundaryPoints = [
+      10, 338, 297, 332, 284, 251, 389, 356, 454, 323,
+      361, 288, 397, 365, 379, 378, 400, 377, 152, 148,
+      176, 149, 150, 136, 172, 58, 132, 93, 234, 127,
+      162, 21, 54, 103, 67, 109
+    ];
+
+    let bodypixModel = null;
+    let segmenter = null;
+    let faceLandmarker = null;
+    let frameId = 1;
+
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 },
+      });
+      video.srcObject = stream;
+      return new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          resolve();
+        };
+      });
+    }
+
+    async function loadModels() {
+      bodypixModel = await bodyPix.load();
+
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.4/wasm"
+      );
+
+      segmenter = await ImageSegmenter.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/1/selfie_multiclass_256x256.tflite",
+          delegate: "GPU",
+        },
+        runningMode: "VIDEO",
+        outputConfidenceMasks: true,
+        outputCategoryMask: false,
+      });
+
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        },
+        runningMode: "VIDEO",
+        numFaces: 1,
+      });
+    }
+
+    function drawFaceOutline(landmarks, width, height) {
+      ctx.save();
+      ctx.beginPath();
+      boundaryPoints.forEach((idx, i) => {
+        const pt = landmarks[idx];
+        if (!pt) return;
+        const x = pt.x * width;
+        const y = pt.y * height;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
+      ctx.fill();
+      ctx.restore();
+    }
+
+    async function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // BodyPix face skin mask
+      const bodySegmentation = await bodypixModel.segmentPersonParts(video);
+      const { data: partData, width, height } = bodySegmentation;
+
+      const faceMaskData = new Uint8ClampedArray(width * height * 4);
+      for (let i = 0; i < partData.length; i++) {
+        const j = i * 4;
+        if (partData[i] === BODYPIX_FACE_PART_ID) {
+          faceMaskData[j] = 255;      // R
+          faceMaskData[j + 1] = 220;  // G
+          faceMaskData[j + 2] = 180;  // B
+          faceMaskData[j + 3] = 180;  // A (transparency)
+        } else {
+          faceMaskData[j + 3] = 0;    // transparent
+        }
+      }
+      ctx.putImageData(new ImageData(faceMaskData, width, height), 0, 0);
+
+      // MediaPipe ImageSegmenter hair mask
+      const segmentation = await segmenter.segmentForVideo(video, frameId++);
+      const hairMask = segmentation.confidenceMasks?.[1];
+      if (hairMask) {
+        const hairData = hairMask.getAsFloat32Array();
+        const hairImage = ctx.createImageData(hairMask.width, hairMask.height);
+        for (let i = 0; i < hairData.length; i++) {
+          const j = i * 4;
+          if (hairData[i] > 0.3) {
+            hairImage.data[j] = 128;
+            hairImage.data[j + 1] = 0;
+            hairImage.data[j + 2] = 128;
+            hairImage.data[j + 3] = 255;
+          } else {
+            hairImage.data[j + 3] = 0;
+          }
+        }
+        ctx.putImageData(hairImage, 0, 0);
+        hairMask.close(); // prevent memory leak
+      }
+
+      // MediaPipe FaceLandmarker face outline
+      const now = performance.now();
+      const faceResults = await faceLandmarker.detectForVideo(video, now);
+      if (faceResults.faceLandmarks?.length > 0) {
+        drawFaceOutline(faceResults.faceLandmarks[0], canvas.width, canvas.height);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    async function main() {
+      await setupCamera();
+
+      // Resize canvas to video size
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+
+      await loadModels();
+
+      render();
+    }
+
+    main();
+  </script>
+</body>
+</html>/Users/riyareddy/Contour-face-mask/package.json
+/Users/riyareddy/Contour-face-mask/hair_seg

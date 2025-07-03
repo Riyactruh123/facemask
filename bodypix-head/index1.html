@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>BodyPix Head Segmentation</title>
+  <style>
+    body {
+      margin: 0;
+      background: black;
+      overflow: hidden;
+    }
+    video, canvas {
+      position: absolute;
+      width: 640px;
+      height: 480px;
+      top: 0;
+      left: 0;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <canvas id="buffer" width="640" height="480" style="display: none;"></canvas>
+
+  <!-- Load TFJS + BodyPix -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
+
+  <!-- Load your script -->
+  <script type="module" src="./bodypix.js"></script>
+</body>
+</html>

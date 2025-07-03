@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hair Segmentation Overlay</title>
+  <style>
+    html, body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+    }
+    #video, #canvas {
+      position: absolute;
+      width: 640px;
+      height: 480px;
+    }
+    #canvas {
+      mix-blend-mode: multiply; /* overlays mask naturally */
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+
+  <script type="module" src="hairseg.js"></script>
+</body>
+</html>
